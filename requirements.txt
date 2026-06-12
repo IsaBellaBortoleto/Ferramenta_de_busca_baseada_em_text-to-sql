@@ -1,0 +1,15 @@
+# Dependências do projeto Text-to-SQL
+# Instale com: pip install -r requirements.txt
+
+# Conexão com MySQL
+mysql-connector-python==8.3.0
+
+# Conexão com PostgreSQL
+psycopg2-binary
+
+# Chamadas HTTP para a API do Ollama
+requests==2.31.0
+
+# NOTA: tkinter NÃO é instalado via pip.
+# - Windows: já vem com Python automaticamente
+# - Ubuntu: sudo apt install python3-tk
