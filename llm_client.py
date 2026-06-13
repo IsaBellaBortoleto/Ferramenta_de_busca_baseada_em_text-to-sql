@@ -56,7 +56,8 @@ class OllamaClient:
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "stream": False,   # recebe a resposta completa de uma vez
+            "stream": False,       # recebe a resposta completa de uma vez
+            "keep_alive": "30m",   # mantém o modelo na RAM entre consultas
             "options": {
                 "temperature": 0,  # 0 = determinístico, sem criatividade
                                    # ideal para geração de SQL preciso
@@ -67,7 +68,8 @@ class OllamaClient:
             response = requests.post(
                 url=f"{self.base_url}/api/generate",
                 json=payload,
-                timeout=120  # modelos locais podem demorar alguns segundos
+                timeout=300  # em máquinas sem GPU, a primeira consulta
+                             # inclui o tempo de carregar o modelo na RAM
             )
             response.raise_for_status()
 
@@ -137,13 +139,14 @@ SQL:"""
             "model": self.model,
             "prompt": prompt,
             "stream": False,
+            "keep_alive": "30m",
             "options": {"temperature": 0},
         }
 
         response = requests.post(
             url=f"{self.base_url}/api/generate",
             json=payload,
-            timeout=120
+            timeout=300
         )
         response.raise_for_status()
 
