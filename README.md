@@ -29,6 +29,11 @@ Ferramenta desktop que permite realizar consultas em bancos de dados relacionais
      ```bash
      ollama pull qwen2.5-coder:7b
      ```
+   - **Em máquinas com pouca RAM ou sem GPU** (notebooks antigos), use a versão menor, que responde muito mais rápido:
+     ```bash
+     ollama pull qwen2.5-coder:1.5b
+     ```
+     e digite `qwen2.5-coder:1.5b` no campo **Modelo** da interface.
    - Iniciar o servidor (se não iniciar automaticamente):
      ```bash
      ollama serve
@@ -74,6 +79,18 @@ python main.py
 
 ---
 
+## Funcionalidades
+
+- **Conexão com MySQL e PostgreSQL** através de uma interface única (a aplicação não muda conforme o banco).
+- **Carregamento automático do esquema** (tabelas e colunas) a partir do `information_schema`.
+- **Geração de SQL por LLM local** via Ollama, com regras de dialeto específicas para cada banco.
+- **Value linking:** o esquema enviado ao modelo inclui exemplos de valores reais das colunas de texto com poucos valores distintos (ex: `dept_name → 'Music', 'Physics'`), para o modelo usar o literal correto em vez de traduzi-lo.
+- **Validação de segurança:** apenas consultas `SELECT` são executadas; comandos como `DROP`, `DELETE`, `UPDATE` e múltiplos statements são bloqueados antes de chegar ao banco (defesa contra *prompt injection*).
+- **Correção automática de dialeto** (ex: `ILIKE` → `LIKE` no MySQL) e **auto-retry:** se a query falhar, o erro do banco é reenviado ao modelo para uma segunda tentativa corrigida.
+- **Interface em modo escuro**, com SQL gerado redimensionável e barra de progresso durante o processamento.
+
+---
+
 ## Estrutura do projeto
 
 ```
@@ -93,13 +110,19 @@ text-to-sql/
 ```
 Usuário digita pergunta
         ↓
+db_connector.py lê o schema (tabelas, colunas e exemplos de valores)
+        ↓
 llm_client.py monta um prompt com:
-  - schema do banco (tabelas e colunas)
+  - schema do banco + regras de dialeto
   - pergunta do usuário
         ↓
 Ollama processa e retorna a query SQL
         ↓
-db_connector.py executa a query no banco
+llm_client.py limpa e valida o SQL (corrige dialeto, garante que é SELECT)
+        ↓
+db_connector.py valida (só SELECT) e executa a query no banco
+        ↓
+  └─ se a query falhar, o erro é reenviado ao modelo (auto-retry)
         ↓
 gui.py exibe os resultados em tabela
 ```
@@ -130,5 +153,7 @@ gui.py exibe os resultados em tabela
 ## Observações
 
 - O Ollama precisa estar rodando **antes** de iniciar a aplicação
-- O modelo `qwen2.5-coder:7b` é especializado em código (incluindo SQL) e segue bem as instruções de dialeto do prompt; modelos antigos fine-tunados só em PostgreSQL (como o `sqlcoder`) tendem a gerar sintaxe inválida para MySQL
+- O modelo `qwen2.5-coder` é especializado em código (incluindo SQL) e segue bem as instruções de dialeto do prompt; modelos antigos fine-tunados só em PostgreSQL (como o `sqlcoder`) tendem a gerar sintaxe inválida para MySQL
 - A qualidade das queries geradas depende da clareza da pergunta e da estrutura do banco
+- **Desempenho:** a **primeira** consulta é mais lenta porque o modelo é carregado na memória; as seguintes são rápidas. A aplicação mantém o modelo carregado por 30 minutos entre consultas (`keep_alive`). Em máquinas sem GPU, prefira o modelo `1.5b` e mantenha apenas o necessário aberto para liberar RAM
+- Apenas consultas de **leitura** (`SELECT`) são suportadas — por design, por segurança. Recomenda-se ainda conectar com um usuário de banco que tenha somente privilégio de leitura
