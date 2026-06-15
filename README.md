@@ -1,5 +1,8 @@
-# Ferramenta de Busca Baseada em Text-to-SQL
+## <h1 align="center">Ferramenta de Busca Baseada em Text-to-SQL</h1>
 
+<img src="https://github.com/IsaBellaBortoleto/Ferramenta_de_busca_baseada_em_text-to-sql/blob/main/images/resultado_consulta.png" width="750">
+<br/>
+Figura 1. 
 Ferramenta desktop que permite realizar consultas em bancos de dados relacionais usando **linguagem natural**. O usuário digita uma pergunta em português, e a ferramenta converte automaticamente para SQL utilizando um modelo de linguagem local via Ollama.
 
 ---
