@@ -202,6 +202,7 @@ Regras gerais:
 - Sempre use JOIN explícito quando precisar de dados de mais de uma tabela
 - Nunca referencie uma tabela no WHERE sem incluí-la no FROM ou em um JOIN
 - Use aspas simples para valores de string, nunca aspas duplas
+- Ao filtrar por texto, use EXATAMENTE um dos "valores possíveis" listados no schema para aquela coluna, respeitando idioma e grafia originais (ex: se a coluna lista 'Music', use 'Music', não traduza para 'Música')
 - Se a pergunta não puder ser respondida com o schema fornecido, retorne: SELECT 'Não foi possível gerar uma query para esta pergunta'
 
 Regras específicas para {dialect_name}:

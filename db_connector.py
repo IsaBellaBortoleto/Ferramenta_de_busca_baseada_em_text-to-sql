@@ -148,10 +148,70 @@ class DatabaseConnector:
         for table_name, columns in schema.items():
             lines.append(f"Tabela: {table_name}")
             for column_name, data_type in columns:
-                lines.append(f"  - {column_name} ({data_type})")
+                line = f"  - {column_name} ({data_type})"
+
+                # Para colunas de texto com poucos valores distintos,
+                # inclui exemplos dos valores reais. Isso ensina o modelo
+                # a usar o literal correto (ex: 'Music', e não 'Música'),
+                # técnica conhecida como "value linking".
+                if self._is_text_type(data_type):
+                    samples = self._get_distinct_values(table_name, column_name)
+                    if samples:
+                        shown = ", ".join(f"'{v}'" for v in samples)
+                        line += f" — valores possíveis: {shown}"
+
+                lines.append(line)
             lines.append("")  # linha em branco entre tabelas
 
         return "\n".join(lines)
+
+    @staticmethod
+    def _is_text_type(data_type):
+        """Indica se o tipo de dado é textual (candidato a ter valores de exemplo)."""
+        t = data_type.lower()
+        return any(k in t for k in ("char", "text", "enum"))
+
+    def _get_distinct_values(self, table, column, limit=15):
+        """
+        Retorna os valores distintos de uma coluna, até um limite.
+
+        Usado para enriquecer o esquema com exemplos de valores reais.
+        Colunas com muitos valores distintos (ex: nomes de pessoas) são
+        ignoradas, pois não ajudam o modelo e aumentariam o prompt.
+
+        Parâmetros:
+            table  (str): nome da tabela
+            column (str): nome da coluna
+            limit  (int): nº máximo de valores; acima disso, a coluna é ignorada
+
+        Retorna:
+            list | None: lista de valores, ou None se houver valores demais
+                         (alta cardinalidade) ou se a consulta falhar
+        """
+        # Identificadores vêm do próprio catálogo do banco (confiáveis),
+        # mas são citados para suportar nomes especiais. MySQL usa crase,
+        # PostgreSQL usa aspas duplas.
+        q = "`" if self.db_type == "mysql" else '"'
+        qtable, qcol = f"{q}{table}{q}", f"{q}{column}{q}"
+
+        # Busca limit+1 valores: se vier mais que 'limit', é alta cardinalidade
+        sql = (
+            f"SELECT DISTINCT {qcol} FROM {qtable} "
+            f"WHERE {qcol} IS NOT NULL LIMIT {limit + 1}"
+        )
+
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(sql)
+            values = [row[0] for row in cursor.fetchall()]
+        except Exception:
+            return None  # em caso de erro, simplesmente não inclui exemplos
+        finally:
+            cursor.close()
+
+        if not values or len(values) > limit:
+            return None
+        return values
 
     def get_table_names(self):
         """
@@ -167,9 +227,69 @@ class DatabaseConnector:
     # Execução de queries
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _validate_sql(sql):
+        """
+        Valida o SQL gerado pelo LLM antes de executá-lo.
+
+        Proteção contra prompt injection → SQL injection:
+        só permite queries SELECT e bloqueia comandos destrutivos
+        ou de manipulação de dados (DDL/DML).
+
+        Parâmetros:
+            sql (str): query SQL a validar
+
+        Lança:
+            ValueError se o SQL não for um SELECT ou contiver
+            palavras-chave perigosas
+        """
+        # Palavras-chave que nunca devem aparecer num SELECT de leitura
+        FORBIDDEN = [
+            "drop", "delete", "truncate", "insert", "update",
+            "alter", "create", "replace", "grant", "revoke",
+            "exec", "execute", "xp_", "sp_",           # procedimentos
+            "load_file", "into outfile", "into dumpfile",  # exfiltração de arquivos
+            "sleep(", "benchmark(",                     # ataques de tempo
+        ]
+
+        sql_lower = sql.lower().strip()
+
+        # A query deve começar com SELECT (ignora comentários iniciais)
+        # Remove comentários de linha (--) antes de checar
+        sql_clean = "\n".join(
+            line for line in sql_lower.splitlines()
+            if not line.strip().startswith("--")
+        ).strip()
+
+        if not sql_clean.startswith("select"):
+            raise ValueError(
+                f"Segurança: apenas queries SELECT são permitidas.\n"
+                f"O modelo gerou uma instrução não autorizada:\n{sql[:200]}"
+            )
+
+        # Verifica palavras-chave proibidas no corpo da query
+        for keyword in FORBIDDEN:
+            if keyword in sql_lower:
+                raise ValueError(
+                    f"Segurança: a query contém a palavra-chave proibida '{keyword}'.\n"
+                    f"Query bloqueada:\n{sql[:200]}"
+                )
+
+        # Bloqueia múltiplos statements (ex: SELECT 1; DROP TABLE x)
+        # Remove strings entre aspas simples antes de checar o ponto-e-vírgula
+        # para evitar falsos positivos com valores que contenham ";"
+        import re
+        sql_no_strings = re.sub(r"'[^']*'", "''", sql_lower)
+        statements = [s.strip() for s in sql_no_strings.split(";") if s.strip()]
+        if len(statements) > 1:
+            raise ValueError(
+                "Segurança: múltiplos statements detectados. "
+                "Apenas uma query por vez é permitida."
+            )
+
     def execute_query(self, sql):
         """
-        Executa uma query SQL e retorna os resultados.
+        Valida e executa uma query SQL, retornando os resultados.
 
         Parâmetros:
             sql (str): query SQL gerada pelo LLM
@@ -180,9 +300,13 @@ class DatabaseConnector:
                 - rows: lista de tuplas com os dados
 
         Lança:
+            ValueError  se o SQL não passar na validação de segurança
             RuntimeError se não houver conexão ativa
             Exception com a mensagem de erro do banco se a query falhar
         """
+        # Valida antes de qualquer interação com o banco
+        self._validate_sql(sql)
+
         if self.connection is None:
             raise RuntimeError("Não há conexão ativa. Chame connect() primeiro.")
 
